@@ -136,4 +136,4 @@ All processing happens locally on your machine. No data is sent to external serv
 
 ## License
 
-MIT License - Feel free to modify and distribute
+GNU General Public License v3.0 - See LICENSE file for details
