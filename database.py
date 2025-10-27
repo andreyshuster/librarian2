@@ -6,6 +6,7 @@ from chromadb.config import Settings
 from pathlib import Path
 from typing import List, Dict, Optional
 import hashlib
+from db_lock import DatabaseLock
 
 
 class BookDatabase:
@@ -22,6 +23,11 @@ class BookDatabase:
         self.db_path = Path(db_path)
         self.db_path.mkdir(parents=True, exist_ok=True)
         self.verbose = verbose
+
+        # Acquire database lock to prevent concurrent access
+        self.lock = DatabaseLock(db_path, timeout=None, verbose=verbose)
+        if not self.lock.acquire():
+            raise RuntimeError("Could not acquire database lock")
 
         # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(
@@ -243,3 +249,12 @@ class BookDatabase:
             print("✓ Database reset successfully")
         except Exception as e:
             print(f"Error resetting database: {e}")
+
+    def close(self):
+        """Close the database and release the lock."""
+        if hasattr(self, 'lock') and self.lock:
+            self.lock.release()
+
+    def __del__(self):
+        """Cleanup: release the lock when the object is destroyed."""
+        self.close()
