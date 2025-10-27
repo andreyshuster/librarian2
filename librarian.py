@@ -3,6 +3,8 @@
 Librarian - A natural language book search agent.
 Search your book library using semantic queries.
 """
+import argparse
+import signal
 import sys
 from pathlib import Path
 from rich.console import Console
@@ -15,6 +17,9 @@ from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from database import BookDatabase
 from indexer import BookIndexer
 from background_indexer import BackgroundIndexer
+
+# Global flag for graceful shutdown
+_shutdown_requested = False
 
 
 console = Console()
@@ -56,10 +61,12 @@ class Librarian:
 
     def display_welcome(self):
         """Display welcome message."""
-        welcome_text = """
+        welcome_text = f"""
 # 📚 Librarian - Your Book Search Agent
 
 Ask me questions about your books in natural language!
+
+**Database:** `{self.db_path}`
 
 **Examples:**
 - "Show me books about artificial intelligence"
@@ -222,6 +229,12 @@ Ask me questions about your books in natural language!
                     console.print(f"  Successfully indexed: {stats.get('success', 0)} book(s)")
                     if stats.get('failed', 0) > 0:
                         console.print(f"  Failed: {stats.get('failed', 0)} book(s)")
+                elif last_update.get('status') == 'interrupted':
+                    stats = last_update.get('stats', {})
+                    console.print("[bold yellow]⚠ Background indexing was interrupted[/bold yellow]")
+                    console.print(f"  Progress saved: {stats.get('success', 0)} book(s) indexed")
+                    if stats.get('failed', 0) > 0:
+                        console.print(f"  Failed: {stats.get('failed', 0)} book(s)")
                 elif last_update.get('status') == 'error':
                     console.print(f"[bold red]✗ Background indexing failed:[/bold red]")
                     console.print(f"  {last_update.get('message', 'Unknown error')}")
@@ -255,6 +268,13 @@ Ask me questions about your books in natural language!
                 stats = update.get('stats', {})
                 console.print("\n[bold green]✓ Background indexing completed![/bold green]")
                 console.print(f"  Successfully indexed: {stats.get('success', 0)} book(s)")
+                if stats.get('failed', 0) > 0:
+                    console.print(f"  Failed: {stats.get('failed', 0)} book(s)")
+                console.print()
+            elif status == 'interrupted':
+                stats = update.get('stats', {})
+                console.print("\n[bold yellow]⚠ Background indexing was interrupted[/bold yellow]")
+                console.print(f"  Progress saved: {stats.get('success', 0)} book(s) indexed")
                 if stats.get('failed', 0) > 0:
                     console.print(f"  Failed: {stats.get('failed', 0)} book(s)")
                 console.print()
@@ -324,26 +344,67 @@ Ask me questions about your books in natural language!
 
 def main():
     """Main entry point."""
-    # Check if a directory was provided as argument
-    if len(sys.argv) > 1:
-        # If argument provided, index it first then start chat
-        path = sys.argv[1]
-        console.print(f"[cyan]Indexing books from: {path}[/cyan]\n")
+    global _shutdown_requested
 
-        indexer = BookIndexer()
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description="Librarian - A natural language book search agent",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  librarian.py                           Start interactive chat
+  librarian.py /path/to/books            Index books then start chat
+  librarian.py -d ./my_db               Use custom database location
+  librarian.py /path/to/books -d ./my_db Index and use custom database
+        """
+    )
+    parser.add_argument(
+        'path',
+        nargs='?',
+        help='Path to a book file or directory to index before starting'
+    )
+    parser.add_argument(
+        '-d', '--db-path',
+        default='./chroma_db',
+        help='Path to the database directory (default: ./chroma_db)'
+    )
+
+    args = parser.parse_args()
+
+    def signal_handler(signum, frame):
+        """Handle shutdown signals gracefully."""
+        global _shutdown_requested
+        _shutdown_requested = True
+
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Check if a path was provided for initial indexing
+    if args.path:
+        # If path provided, index it first then start chat
+        console.print(f"[cyan]Indexing books from: {args.path}[/cyan]")
+        console.print(f"[dim]Using database: {args.db_path}[/dim]\n")
+
+        indexer = BookIndexer(args.db_path)
         try:
-            if Path(path).is_dir():
-                indexer.index_directory(path)
+            if Path(args.path).is_dir():
+                indexer.index_directory(args.path, interrupt_check=lambda: _shutdown_requested)
             else:
-                indexer.index_file(path)
+                indexer.index_file(args.path)
         finally:
             # Clean up indexer
             indexer.close()
 
+        # If interrupted during indexing, exit gracefully
+        if _shutdown_requested:
+            console.print("\n[yellow]Exiting...[/yellow]\n")
+            return
+
         console.print()
 
     # Start the interactive chat
-    librarian = Librarian()
+    librarian = Librarian(db_path=args.db_path)
     librarian.run()
 
 

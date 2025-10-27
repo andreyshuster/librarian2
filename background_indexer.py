@@ -2,10 +2,14 @@
 Background indexing module for non-blocking book indexing.
 """
 import multiprocessing
+import signal
 import time
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+
+# Global flag for graceful shutdown in worker process
+_shutdown_requested = False
 
 
 class BackgroundIndexer:
@@ -27,6 +31,17 @@ class BackgroundIndexer:
             db_path: Path to the database
             status_queue: Queue for sending status updates
         """
+        global _shutdown_requested
+
+        def signal_handler(signum, frame):
+            """Handle shutdown signals gracefully."""
+            global _shutdown_requested
+            _shutdown_requested = True
+
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
         try:
             # Import here to avoid issues with multiprocessing
             from indexer import BookIndexer
@@ -40,17 +55,24 @@ class BackgroundIndexer:
                 path_obj = Path(path)
                 if path_obj.is_dir():
                     status_queue.put({"status": "running", "message": f"Indexing directory: {path}"})
-                    stats = indexer.index_directory(path)
+                    stats = indexer.index_directory(path, interrupt_check=lambda: _shutdown_requested)
                 else:
                     status_queue.put({"status": "running", "message": f"Indexing file: {path}"})
                     success = indexer.index_file(path)
                     stats = {'success': 1 if success else 0, 'failed': 0 if success else 1}
 
-                status_queue.put({
-                    "status": "completed",
-                    "message": "Indexing completed successfully!",
-                    "stats": stats
-                })
+                if _shutdown_requested:
+                    status_queue.put({
+                        "status": "interrupted",
+                        "message": "Indexing interrupted - progress saved",
+                        "stats": stats
+                    })
+                else:
+                    status_queue.put({
+                        "status": "completed",
+                        "message": "Indexing completed successfully!",
+                        "stats": stats
+                    })
             finally:
                 indexer.close()
 
@@ -150,12 +172,16 @@ class BackgroundIndexer:
         return f"{minutes}m {seconds}s"
 
     def stop(self):
-        """Stop the background indexing process."""
+        """Stop the background indexing process gracefully."""
         if self.process and self.process.is_alive():
+            # Send SIGTERM for graceful shutdown
             self.process.terminate()
-            self.process.join(timeout=2)
+            # Wait up to 10 seconds for graceful shutdown
+            self.process.join(timeout=10)
+            # If still running, force kill
             if self.process.is_alive():
                 self.process.kill()
+                self.process.join(timeout=1)
         self.process = None
         self.start_time = None
 

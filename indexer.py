@@ -43,13 +43,14 @@ class BookIndexer:
             books.extend(directory.rglob(f"*{ext}"))
         return sorted(books)
 
-    def index_directory(self, directory: str, recursive: bool = True) -> dict:
+    def index_directory(self, directory: str, recursive: bool = True, interrupt_check=None) -> dict:
         """
         Index all books in a directory.
 
         Args:
             directory: Path to the directory containing books
             recursive: Whether to search subdirectories
+            interrupt_check: Optional callback function that returns True if indexing should stop
 
         Returns:
             Dictionary with indexing statistics
@@ -90,6 +91,11 @@ class BookIndexer:
             task = progress.add_task("[cyan]Indexing books...", total=len(books))
 
             for book_path in books:
+                # Check for interruption request
+                if interrupt_check and interrupt_check():
+                    progress.update(task, description="[yellow]Interrupted - saving progress...")
+                    break
+
                 progress.update(task, description=f"[cyan]Processing: {book_path.name}")
 
                 # Extract book content
@@ -111,7 +117,12 @@ class BookIndexer:
                 progress.advance(task)
 
         # Print summary
-        console.print("\n[bold green]Indexing Complete![/bold green]")
+        interrupted = interrupt_check and interrupt_check()
+        if interrupted:
+            console.print("\n[bold yellow]Indexing Interrupted![/bold yellow]")
+            console.print("[yellow]Progress has been saved.[/yellow]")
+        else:
+            console.print("\n[bold green]Indexing Complete![/bold green]")
         console.print(f"  ✓ Successfully indexed: {stats['success']}")
         if stats['failed'] > 0:
             console.print(f"  ✗ Failed: {stats['failed']}")
