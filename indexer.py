@@ -43,6 +43,51 @@ class BookIndexer:
             books.extend(directory.rglob(f"*{ext}"))
         return sorted(books)
 
+    def scan_for_new_books(self, directory: str, recursive: bool = True) -> dict:
+        """
+        Scan a directory to find books that aren't indexed yet.
+
+        Args:
+            directory: Path to the directory to scan
+            recursive: Whether to search subdirectories
+
+        Returns:
+            Dictionary with 'new', 'indexed', and 'total' counts and lists
+        """
+        dir_path = Path(directory)
+
+        if not dir_path.exists():
+            console.print(f"[red]Error: Directory '{directory}' does not exist[/red]")
+            return {'new': [], 'indexed': [], 'total': 0}
+
+        # Find all books in directory
+        if recursive:
+            books = self.find_books(dir_path)
+        else:
+            books = [f for f in dir_path.iterdir()
+                     if f.is_file() and f.suffix.lower() in self.SUPPORTED_FORMATS]
+
+        # Get indexed files from database
+        indexed_files = self.db.get_indexed_files()
+        indexed_paths = set(indexed_files.keys())
+
+        # Separate new and already-indexed books
+        new_books = []
+        already_indexed = []
+
+        for book_path in books:
+            book_path_str = str(book_path)
+            if book_path_str in indexed_paths:
+                already_indexed.append(book_path)
+            else:
+                new_books.append(book_path)
+
+        return {
+            'new': new_books,
+            'indexed': already_indexed,
+            'total': len(books)
+        }
+
     def index_directory(self, directory: str, recursive: bool = True, interrupt_check=None) -> dict:
         """
         Index all books in a directory.

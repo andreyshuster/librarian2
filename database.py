@@ -234,6 +234,54 @@ class BookDatabase:
             print(f"Error getting stats: {e}")
             return {}
 
+    def get_indexed_files(self) -> Dict[str, Dict]:
+        """
+        Get all indexed book files from the database.
+
+        Returns:
+            Dictionary mapping file paths to book metadata
+        """
+        try:
+            # Get all documents from the collection
+            results = self.collection.get()
+
+            if not results or not results['metadatas']:
+                return {}
+
+            # Extract unique books (deduplicate chunks)
+            books = {}
+            for metadata in results['metadatas']:
+                filename = metadata.get('filename', '')
+                if filename and filename not in books:
+                    books[filename] = {
+                        'title': metadata.get('title', 'Unknown'),
+                        'author': metadata.get('author', 'Unknown'),
+                        'format': metadata.get('format', ''),
+                        'length': metadata.get('length', 0)
+                    }
+
+            return books
+        except Exception as e:
+            print(f"Error getting indexed files: {e}")
+            return {}
+
+    def is_book_indexed(self, file_path: str) -> bool:
+        """
+        Check if a book is already indexed in the database.
+
+        Args:
+            file_path: Path to the book file
+
+        Returns:
+            True if indexed, False otherwise
+        """
+        try:
+            book_id = self._generate_book_id(file_path)
+            existing = self.collection.get(ids=[book_id])
+            return bool(existing['ids'])
+        except:
+            return False
+
     def reset(self):
         """Reset the database (delete all data)."""
         try:

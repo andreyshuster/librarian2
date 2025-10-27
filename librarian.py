@@ -78,6 +78,7 @@ Ask me questions about your books in natural language!
 - `/index <path>` - Index a book file or directory (foreground)
 - `/index-bg <path>` - Index a book file or directory in background
 - `/index-status` - Check background indexing status
+- `/check <path>` - Check for new books in a directory
 - `/stats` - Show database statistics
 - `/help` - Show this help message
 - `/quit` or `/exit` - Exit the program
@@ -189,6 +190,13 @@ Ask me questions about your books in natural language!
                     else:
                         console.print("[red]Failed to start background indexing[/red]")
 
+        elif command == '/check':
+            if len(parts) < 2:
+                console.print("[red]Usage: /check <directory>[/red]")
+            else:
+                path = parts[1].strip()
+                self.check_for_new_books(path)
+
         elif command == '/index-status':
             self.show_indexing_status()
 
@@ -282,6 +290,41 @@ Ask me questions about your books in natural language!
                 console.print(f"\n[bold red]✗ Background indexing failed:[/bold red]")
                 console.print(f"  {message}\n")
 
+    def check_for_new_books(self, directory: str):
+        """Check a directory for new books that aren't indexed yet."""
+        if not Path(directory).exists():
+            console.print(f"[red]Error: Directory '{directory}' does not exist[/red]")
+            return
+
+        console.print(f"\n[cyan]Scanning directory: {directory}[/cyan]")
+
+        with console.status("[bold cyan]Checking for new books...", spinner="dots"):
+            result = self.indexer.scan_for_new_books(directory)
+
+        new_books = result['new']
+        indexed_books = result['indexed']
+        total = result['total']
+
+        # Display results
+        console.print("\n[bold cyan]📚 Scan Results:[/bold cyan]")
+        console.print(f"  Total books found: {total}")
+        console.print(f"  Already indexed: {len(indexed_books)}")
+        console.print(f"  New books: [bold green]{len(new_books)}[/bold green]")
+
+        if new_books:
+            console.print("\n[bold yellow]New books found:[/bold yellow]")
+            for i, book in enumerate(new_books[:10], 1):  # Show first 10
+                console.print(f"  {i}. {book.name}")
+
+            if len(new_books) > 10:
+                console.print(f"  ... and {len(new_books) - 10} more")
+
+            console.print(f"\n[dim]Use /index {directory} to index these books[/dim]")
+        else:
+            console.print("\n[green]✓ All books in this directory are already indexed![/green]")
+
+        console.print()
+
     def cleanup(self):
         """Clean up resources before exit."""
         # Stop background indexing
@@ -352,10 +395,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  librarian.py                           Start interactive chat
-  librarian.py /path/to/books            Index books then start chat
-  librarian.py -d ./my_db               Use custom database location
-  librarian.py /path/to/books -d ./my_db Index and use custom database
+  librarian.py                            Start interactive chat
+  librarian.py /path/to/books             Index books then start chat
+  librarian.py --check /path/to/books     Check for new books
+  librarian.py -d ./my_db                Use custom database location
+  librarian.py /path/to/books -d ./my_db  Index and use custom database
         """
     )
     parser.add_argument(
@@ -368,6 +412,11 @@ Examples:
         default='./chroma_db',
         help='Path to the database directory (default: ./chroma_db)'
     )
+    parser.add_argument(
+        '--check',
+        action='store_true',
+        help='Check for new books without indexing (requires path argument)'
+    )
 
     args = parser.parse_args()
 
@@ -379,6 +428,25 @@ Examples:
     # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    # Handle --check flag
+    if args.check:
+        if not args.path:
+            console.print("[red]Error: --check requires a path argument[/red]")
+            console.print("[yellow]Usage: librarian.py --check /path/to/books[/yellow]")
+            return
+
+        if not Path(args.path).is_dir():
+            console.print("[red]Error: --check requires a directory path[/red]")
+            return
+
+        console.print(f"[dim]Using database: {args.db_path}[/dim]")
+
+        # Create librarian instance just for checking
+        librarian = Librarian(db_path=args.db_path)
+        librarian.check_for_new_books(args.path)
+        librarian.cleanup()
+        return
 
     # Check if a path was provided for initial indexing
     if args.path:
