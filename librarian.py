@@ -14,6 +14,7 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from database import BookDatabase
 from indexer import BookIndexer
+from background_indexer import BackgroundIndexer
 
 
 console = Console()
@@ -27,6 +28,7 @@ class Librarian:
         self.db_path = db_path
         self.db = None  # Lazy load database
         self._indexer = None  # Lazy load indexer
+        self.bg_indexer = BackgroundIndexer()  # Background indexing
         # Create prompt session with history and auto-suggestions
         self.session = PromptSession(
             history=InMemoryHistory(),
@@ -66,7 +68,9 @@ Ask me questions about your books in natural language!
 - "Books about history of Rome"
 
 **Commands:**
-- `/index <path>` - Index a book file or directory
+- `/index <path>` - Index a book file or directory (foreground)
+- `/index-bg <path>` - Index a book file or directory in background
+- `/index-status` - Check background indexing status
 - `/stats` - Show database statistics
 - `/help` - Show this help message
 - `/quit` or `/exit` - Exit the program
@@ -160,6 +164,27 @@ Ask me questions about your books in natural language!
                 else:
                     self.indexer.index_file(path)
 
+        elif command == '/index-bg':
+            if len(parts) < 2:
+                console.print("[red]Usage: /index-bg <file_or_directory>[/red]")
+            else:
+                path = parts[1].strip()
+                if not Path(path).exists():
+                    console.print(f"[red]Error: Path '{path}' does not exist[/red]")
+                elif self.bg_indexer.is_running():
+                    console.print("[yellow]Background indexing is already running![/yellow]")
+                    console.print("[dim]Use /index-status to check progress[/dim]")
+                else:
+                    if self.bg_indexer.start_indexing(path, self.db_path):
+                        console.print(f"[green]✓ Started background indexing: {path}[/green]")
+                        console.print("[dim]Use /index-status to check progress[/dim]")
+                        console.print("[dim]You can continue searching while indexing runs in the background[/dim]\n")
+                    else:
+                        console.print("[red]Failed to start background indexing[/red]")
+
+        elif command == '/index-status':
+            self.show_indexing_status()
+
         else:
             console.print(f"[red]Unknown command: {command}[/red]")
             console.print("[yellow]Type /help for available commands[/yellow]")
@@ -184,8 +209,65 @@ Ask me questions about your books in natural language!
 
         self.display_results(results)
 
+    def show_indexing_status(self):
+        """Display the status of background indexing."""
+        if not self.bg_indexer.is_running():
+            # Check for final status
+            updates = self.bg_indexer.get_all_status_updates()
+            if updates:
+                last_update = updates[-1]
+                if last_update.get('status') == 'completed':
+                    stats = last_update.get('stats', {})
+                    console.print("[bold green]✓ Background indexing completed![/bold green]")
+                    console.print(f"  Successfully indexed: {stats.get('success', 0)} book(s)")
+                    if stats.get('failed', 0) > 0:
+                        console.print(f"  Failed: {stats.get('failed', 0)} book(s)")
+                elif last_update.get('status') == 'error':
+                    console.print(f"[bold red]✗ Background indexing failed:[/bold red]")
+                    console.print(f"  {last_update.get('message', 'Unknown error')}")
+                else:
+                    console.print("[yellow]No background indexing is currently running.[/yellow]")
+            else:
+                console.print("[yellow]No background indexing is currently running.[/yellow]")
+        else:
+            elapsed = self.bg_indexer.get_elapsed_time()
+            console.print("[bold cyan]Background Indexing Status:[/bold cyan]")
+            console.print(f"  Status: [green]Running[/green]")
+            console.print(f"  Elapsed time: {elapsed}")
+
+            # Show any recent updates
+            updates = self.bg_indexer.get_all_status_updates()
+            if updates:
+                latest = updates[-1]
+                message = latest.get('message', '')
+                if message:
+                    console.print(f"  Current: {message}")
+            console.print()
+
+    def check_background_updates(self):
+        """Check and display background indexing updates if any."""
+        updates = self.bg_indexer.get_all_status_updates()
+        for update in updates:
+            status = update.get('status')
+            message = update.get('message', '')
+
+            if status == 'completed':
+                stats = update.get('stats', {})
+                console.print("\n[bold green]✓ Background indexing completed![/bold green]")
+                console.print(f"  Successfully indexed: {stats.get('success', 0)} book(s)")
+                if stats.get('failed', 0) > 0:
+                    console.print(f"  Failed: {stats.get('failed', 0)} book(s)")
+                console.print()
+            elif status == 'error':
+                console.print(f"\n[bold red]✗ Background indexing failed:[/bold red]")
+                console.print(f"  {message}\n")
+
     def cleanup(self):
         """Clean up resources before exit."""
+        # Stop background indexing
+        if self.bg_indexer.is_running():
+            console.print("[yellow]Stopping background indexing...[/yellow]")
+            self.bg_indexer.cleanup()
         # Close indexer first (won't close db if it doesn't own it)
         if self._indexer is not None:
             self._indexer.close()
@@ -203,9 +285,17 @@ Ask me questions about your books in natural language!
         try:
             while True:
                 try:
+                    # Check for background indexing updates
+                    self.check_background_updates()
+
+                    # Show background indexing indicator in prompt
+                    prompt_prefix = "You: "
+                    if self.bg_indexer.is_running():
+                        prompt_prefix = "[dim]⏳ Indexing...[/dim] You: "
+
                     # Get user input with editing capabilities
                     console.print()  # Add newline before prompt
-                    user_input = self.session.prompt("You: ", default="")
+                    user_input = self.session.prompt(prompt_prefix, default="")
 
                     if not user_input.strip():
                         continue
