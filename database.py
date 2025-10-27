@@ -255,6 +255,15 @@ class BookDatabase:
         if hasattr(self, 'lock') and self.lock:
             self.lock.release()
 
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()
+        return False
+
     def __del__(self):
         """Cleanup: release the lock when the object is destroyed."""
         self.close()

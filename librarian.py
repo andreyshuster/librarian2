@@ -39,7 +39,9 @@ class Librarian:
         """Lazy load the indexer when needed."""
         if self._indexer is None:
             console.print("[dim]Initializing indexer...[/dim]")
-            self._indexer = BookIndexer(self.db_path)
+            # Reuse the existing database instance to avoid lock conflicts
+            db = self._get_database()
+            self._indexer = BookIndexer(self.db_path, db=db)
         return self._indexer
 
     def _get_database(self):
@@ -182,6 +184,15 @@ Ask me questions about your books in natural language!
 
         self.display_results(results)
 
+    def cleanup(self):
+        """Clean up resources before exit."""
+        # Close indexer first (won't close db if it doesn't own it)
+        if self._indexer is not None:
+            self._indexer.close()
+        # Then close the main database
+        if self.db is not None:
+            self.db.close()
+
     def run(self):
         """Run the interactive chat interface."""
         self.display_welcome()
@@ -189,32 +200,36 @@ Ask me questions about your books in natural language!
         # Note: We skip checking if database is empty on startup to avoid loading
         # the model immediately. The user will get feedback when they try to search.
 
-        while True:
-            try:
-                # Get user input with editing capabilities
-                console.print()  # Add newline before prompt
-                user_input = self.session.prompt("You: ", default="")
+        try:
+            while True:
+                try:
+                    # Get user input with editing capabilities
+                    console.print()  # Add newline before prompt
+                    user_input = self.session.prompt("You: ", default="")
 
-                if not user_input.strip():
-                    continue
+                    if not user_input.strip():
+                        continue
 
-                # Handle commands
-                if user_input.startswith('/'):
-                    should_continue = self.handle_command(user_input)
-                    if not should_continue:
-                        break
-                else:
-                    # Perform search
-                    self.search(user_input)
+                    # Handle commands
+                    if user_input.startswith('/'):
+                        should_continue = self.handle_command(user_input)
+                        if not should_continue:
+                            break
+                    else:
+                        # Perform search
+                        self.search(user_input)
 
-            except KeyboardInterrupt:
-                console.print("\n\n[cyan]Goodbye! 👋[/cyan]\n")
-                break
-            except EOFError:
-                console.print("\n\n[cyan]Goodbye! 👋[/cyan]\n")
-                break
-            except Exception as e:
-                console.print(f"\n[red]Error: {e}[/red]\n")
+                except KeyboardInterrupt:
+                    console.print("\n\n[cyan]Goodbye! 👋[/cyan]\n")
+                    break
+                except EOFError:
+                    console.print("\n\n[cyan]Goodbye! 👋[/cyan]\n")
+                    break
+                except Exception as e:
+                    console.print(f"\n[red]Error: {e}[/red]\n")
+        finally:
+            # Always cleanup resources
+            self.cleanup()
 
 
 def main():
@@ -226,11 +241,14 @@ def main():
         console.print(f"[cyan]Indexing books from: {path}[/cyan]\n")
 
         indexer = BookIndexer()
-
-        if Path(path).is_dir():
-            indexer.index_directory(path)
-        else:
-            indexer.index_file(path)
+        try:
+            if Path(path).is_dir():
+                indexer.index_directory(path)
+            else:
+                indexer.index_file(path)
+        finally:
+            # Clean up indexer
+            indexer.close()
 
         console.print()
 

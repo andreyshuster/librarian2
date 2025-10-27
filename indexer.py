@@ -17,14 +17,16 @@ class BookIndexer:
 
     SUPPORTED_FORMATS = {'.pdf', '.epub', '.fb2'}
 
-    def __init__(self, db_path: str = "./chroma_db"):
+    def __init__(self, db_path: str = "./chroma_db", db: BookDatabase = None):
         """
         Initialize the indexer.
 
         Args:
-            db_path: Path to the database
+            db_path: Path to the database (ignored if db is provided)
+            db: Optional existing BookDatabase instance to reuse
         """
-        self.db = BookDatabase(db_path)
+        self.db = db if db is not None else BookDatabase(db_path)
+        self._owns_db = db is None  # Track if we created the db
 
     def find_books(self, directory: Path) -> List[Path]:
         """
@@ -163,6 +165,11 @@ class BookIndexer:
         console.print(f"  Total indexed chunks: {stats.get('total_chunks', 0)}")
         console.print(f"  Collection: {stats.get('collection_name', 'N/A')}")
 
+    def close(self):
+        """Close the database if we own it."""
+        if self._owns_db and self.db:
+            self.db.close()
+
 
 if __name__ == "__main__":
     import sys
@@ -174,9 +181,12 @@ if __name__ == "__main__":
     path = sys.argv[1]
     indexer = BookIndexer()
 
-    if Path(path).is_dir():
-        indexer.index_directory(path)
-    else:
-        indexer.index_file(path)
+    try:
+        if Path(path).is_dir():
+            indexer.index_directory(path)
+        else:
+            indexer.index_file(path)
 
-    indexer.get_stats()
+        indexer.get_stats()
+    finally:
+        indexer.close()
