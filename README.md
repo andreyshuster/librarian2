@@ -8,6 +8,10 @@ A powerful book search agent that lets you search through your personal library 
 - **Semantic Understanding**: Finds books by meaning, not just keywords
 - **Multiple Formats**: Supports PDF, EPUB, and FB2 files
 - **Local AI**: Uses sentence-transformers for privacy (no API keys needed)
+- **Background Indexing**: Index books while continuing to search
+- **Pre-flight Check**: Scan directories to find new books before indexing
+- **Graceful Interruption**: Ctrl-C saves progress during indexing
+- **Configurable Database**: Specify custom database location
 - **Fast Indexing**: Chunks books intelligently for better search results
 - **Beautiful CLI**: Rich text interface with colors and formatting
 
@@ -30,12 +34,30 @@ A powerful book search agent that lets you search through your personal library 
 
 Index a directory and start searching:
 ```bash
-./venv/bin/python librarian.py /path/to/your/books
+./librarian.py /path/to/your/books
 ```
 
 Or start the chat interface without indexing:
 ```bash
-./venv/bin/python librarian.py
+./librarian.py
+```
+
+### Command-Line Options
+
+**Check for new books before indexing:**
+```bash
+./librarian.py --check /path/to/your/books
+```
+
+**Use a custom database location:**
+```bash
+./librarian.py -d /path/to/custom/db
+./librarian.py /path/to/books -d /path/to/custom/db
+```
+
+**View all options:**
+```bash
+./librarian.py --help
 ```
 
 ### Chat Commands
@@ -48,12 +70,19 @@ Once in the chat interface:
   - "What books discuss machine learning?"
 
 - **Index books**: `/index <path>`
-  - `/index ~/Documents/Books` - Index a directory
+  - `/index ~/Documents/Books` - Index a directory (foreground)
   - `/index ~/book.pdf` - Index a single file
+
+- **Background indexing**: `/index-bg <path>`
+  - `/index-bg ~/Documents/Books` - Index in background while you search
+  - `/index-status` - Check background indexing progress
+
+- **Check for new books**: `/check <path>`
+  - `/check ~/Documents/Books` - Scan directory for unindexed books
 
 - **View stats**: `/stats`
 - **Help**: `/help`
-- **Exit**: `/quit` or `/exit` or `Ctrl+C`
+- **Exit**: `/quit` or `/exit` or `Ctrl+C` (saves progress)
 
 ### Index Books Separately
 
@@ -93,11 +122,52 @@ You: Fiction with strong female protagonists
 ## Architecture
 
 ```
-librarian.py      - Main chat interface
-indexer.py        - Book indexing pipeline
-database.py       - ChromaDB manager
-extractors.py     - Text extraction (PDF/EPUB/FB2)
-chroma_db/        - Database storage (created automatically)
+librarian.py           - Main chat interface with command handling
+indexer.py             - Book indexing pipeline with pre-flight checks
+background_indexer.py  - Non-blocking background indexing
+database.py            - ChromaDB manager with lock management
+db_lock.py             - File-based locking for concurrent access
+extractors.py          - Text extraction (PDF/EPUB/FB2)
+chroma_db/             - Database storage (created automatically)
+```
+
+## Key Features Explained
+
+### Background Indexing
+
+Index large collections without blocking searches:
+```bash
+/index-bg ~/Documents/Books
+# Continue searching while indexing runs in background
+/index-status  # Check progress
+```
+
+### Pre-flight Check
+
+Scan directories to see what's new before indexing:
+```bash
+./librarian.py --check ~/Documents/Books
+```
+
+Output shows:
+- Total books found
+- Already indexed count
+- New books list
+
+### Graceful Interruption
+
+Press `Ctrl-C` during indexing to safely stop:
+- Current book processing completes
+- All indexed books are saved to database
+- Database locks are properly released
+- No data corruption
+
+### Custom Database Location
+
+Manage multiple book collections:
+```bash
+./librarian.py -d ~/scifi-db
+./librarian.py -d ~/textbooks-db
 ```
 
 ## Supported Formats
