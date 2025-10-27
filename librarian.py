@@ -92,10 +92,11 @@ Ask me questions about your books in natural language!
             border_style="blue"
         )
 
-        table.add_column("Title", style="cyan", no_wrap=False, width=30)
-        table.add_column("Author", style="magenta", width=20)
+        table.add_column("Title", style="cyan", no_wrap=False, width=25)
+        table.add_column("Author", style="magenta", width=18)
         table.add_column("Format", style="green", width=8)
-        table.add_column("Match", style="yellow", width=50)
+        table.add_column("File", style="blue", no_wrap=False, width=30)
+        table.add_column("Match", style="yellow", width=40)
 
         for book in results:
             # Format relevance score as percentage
@@ -103,13 +104,19 @@ Ask me questions about your books in natural language!
 
             # Truncate best match for display
             match_text = book.get('best_match', '')
-            if len(match_text) > 150:
-                match_text = match_text[:147] + "..."
+            if len(match_text) > 120:
+                match_text = match_text[:117] + "..."
+
+            # Get filename and create a clickable link using OSC 8
+            filename = book.get('filename', 'Unknown')
+            # Create hyperlink that opens the file when clicked (if terminal supports it)
+            file_link = f"[link=file://{filename}]{filename}[/link]"
 
             table.add_row(
                 book['title'],
                 book['author'],
                 book['format'].replace('.', '').upper(),
+                file_link,
                 match_text
             )
 
